@@ -1,0 +1,281 @@
+# 📌 YinkoShield JNI Hardening Semgrep Ruleset
+# -------------------------------------------
+# 🔐 License & Disclaimer:
+# This ruleset is provided as-is under the MIT License. You are free to use, modify, and distribute
+# these rules, but **they may not fit all use cases**. Developers should review and adapt the rules 
+# to match their specific security and performance requirements. YinkoShield assumes no liability 
+# for issues arising from the use of this ruleset.
+#
+# 🛠 Purpose:
+# This ruleset enforces best practices for **defensive JNI programming**, helping Android developers:
+# - Prevent **memory leaks** & **null dereferencing**
+# - Ensure **JNI exception handling** is correctly implemented
+# - Optimize **JNI performance** on low-end Android devices
+# - Enhance **security** by reducing attack surfaces
+#
+# 📥 How to Use:
+# Run this ruleset using Semgrep to scan your JNI C/C++ code:
+# `semgrep --config ./rules --lang c path/to/your/cpp/code`
+#
+# 🚀 Interested in working on complex mobile security problems?
+# We're always recruiting! Reach out to us via LinkedIn:
+# 👉 https://www.linkedin.com/showcase/yinkoshield/
+
+rules:
+  - id: jni-exception-check-required
+    patterns:
+      - pattern: (*env)->$JNI_FUNC(env, ...);
+      - metavariable-pattern:
+          metavariable: $JNI_FUNC
+          pattern: |
+            FindClass|GetMethodID|CallObjectMethod|GetObjectClass|NewStringUTF|CallStaticObjectMethod|GetByteArrayElements|GetStringUTFChars|GetFieldID
+      - pattern-not-inside:
+          if ((*env)->ExceptionCheck(env)) {
+              (*env)->ExceptionDescribe(env);
+              (*env)->ExceptionClear(env);
+          }
+    message: "Missing exception check after calling '$JNI_FUNC'. Ensure to handle exceptions properly after JNI calls."
+    severity: WARNING
+    languages:
+      - c
+
+  - id: jni-null-check-required
+    patterns:
+      - pattern: $VAR = (*env)->$JNI_FUNC(env, ...);
+      - metavariable-pattern:
+          metavariable: $JNI_FUNC
+          pattern: |
+            FindClass|GetMethodID|CallObjectMethod|GetObjectClass|NewStringUTF|CallStaticObjectMethod|GetFieldID|GetByteArrayElements|GetStringUTFChars
+      - pattern-not-inside: |
+          if ($VAR == NULL) {
+              // handle NULL case
+          }
+    message: "Missing NULL check for '$VAR' after calling '$JNI_FUNC'. Ensure to check the result for NULL before proceeding."
+    severity: WARNING
+    languages:
+      - c
+
+  - id: jni-delete-local-ref-required
+    patterns:
+      - pattern: $VAR = (*env)->$JNI_FUNC(env, ...);
+      - metavariable-pattern:
+          metavariable: $JNI_FUNC
+          pattern: |
+            CallObjectMethod|NewStringUTF|FindClass|CallStaticObjectMethod|GetObjectClass
+      - pattern-not-inside: |
+          (*env)->DeleteLocalRef(env, $VAR);
+    message: "Missing DeleteLocalRef for '$VAR'. Make sure to free local references to avoid memory leaks."
+    severity: WARNING
+    languages:
+      - c
+
+  - id: jni-delete-global-ref-required
+    patterns:
+      - pattern: $VAR = (*env)->NewGlobalRef(env, ...);
+      - pattern-not: |
+          if ($VAR == NULL) {
+              ...
+              return;
+          }
+      - pattern-not: |
+          if ($VAR == NULL) {
+              ...
+              goto bail;
+          }
+      - pattern-not: |
+          if ($VAR == NULL) {
+              ...
+              goto cleanup;
+          }
+      - pattern-either:
+        - pattern-inside: |
+            bail:
+            ...
+            (*env)->DeleteGlobalRef(env, $VAR);
+        - pattern-inside: |
+            cleanup:
+            ...
+            (*env)->DeleteGlobalRef(env, $VAR);
+        - pattern-inside: |
+            if ($VAR != NULL) {
+                (*env)->DeleteGlobalRef(env, $VAR);
+            }
+    message: "Missing DeleteGlobalRef for '$VAR'. Ensure to free global references after usage to prevent memory leaks."
+    severity: WARNING
+    languages:
+      - c
+
+
+  - id: jni-check-getarraylength-exception
+    patterns:
+      - pattern: |
+          $VAR = (*env)->GetArrayLength(env, $ARRAY);
+      - pattern-either:
+        - pattern-inside: |
+            if ((*env)->ExceptionCheck(env)) {
+                ...
+                (*env)->ExceptionClear(env);
+            }
+            goto bail;
+        - pattern-inside: |
+            if ((*env)->ExceptionCheck(env)) {
+                ...
+                (*env)->ExceptionClear(env);
+            }
+            return;
+        - pattern-inside: |
+            if ((*env)->ExceptionCheck(env)) {
+                ...
+                (*env)->ExceptionClear(env);
+            }
+            exit(...);
+    message: "Ensure to handle JNI exceptions after calling GetArrayLength."
+    severity: WARNING
+    languages:
+      - c
+
+
+
+
+  - id: jni-release-byte-array-required
+    patterns:
+      - pattern: $VAR = (*env)->GetByteArrayElements(env, $ARRAY, ...);
+      - pattern-not: |
+          if ($VAR == NULL) {
+              ...
+              goto bail;
+          }
+      - pattern-not: |
+          if ($VAR == NULL) {
+              ...
+              goto cleanup;
+          }
+      - pattern-either:
+        - pattern-inside: |
+            bail:
+            ...
+            (*env)->ReleaseByteArrayElements(env, $ARRAY, $VAR, ...);
+        - pattern-inside: |
+            cleanup:
+            ...
+            (*env)->ReleaseByteArrayElements(env, $ARRAY, $VAR, ...);
+        - pattern-inside: |
+            if ($VAR != NULL) {
+                (*env)->ReleaseByteArrayElements(env, $ARRAY, $VAR, ...);
+            }
+    message: "Ensure ReleaseByteArrayElements is called in all paths after GetByteArrayElements to prevent memory leaks."
+    severity: WARNING
+    languages:
+      - c
+
+
+
+
+  - id: jni-release-string-utf-required
+    patterns:
+      - pattern: $VAR = (*env)->GetStringUTFChars(env, $STRING, NULL);
+      - pattern-not: |
+          if ($VAR == NULL) {
+              ...
+              return;
+          }
+      - pattern-not: |
+          if ($VAR == NULL) {
+              ...
+              goto bail;
+          }
+      - pattern-not: |
+          if ($VAR == NULL) {
+              ...
+              goto cleanup;
+          }
+      - pattern-either:
+        - pattern-inside: |
+            bail:
+            ...
+            (*env)->ReleaseStringUTFChars(env, $STRING, $VAR);
+        - pattern-inside: |
+            cleanup:
+            ...
+            (*env)->ReleaseStringUTFChars(env, $STRING, $VAR);
+        - pattern-inside: |
+            if ($VAR != NULL) {
+                (*env)->ReleaseStringUTFChars(env, $STRING, $VAR);
+            }
+    message: "Missing ReleaseStringUTFChars after GetStringUTFChars. Ensure proper JNI resource handling."
+    severity: WARNING
+    languages:
+      - c
+
+
+
+  - id: jni-exception-handling-in-loop
+    patterns:
+      - pattern-either:
+          - pattern: |
+              for ($INIT; $COND; $INCR) {
+                (*env)->$FUNC(env, ...);
+              }
+          - pattern: |
+              while ($COND) {
+                (*env)->$FUNC(env, ...);
+              }
+      - pattern-not-inside: |
+          if ((*env)->ExceptionCheck(env)) {
+              (*env)->ExceptionDescribe(env);
+              (*env)->ExceptionClear(env);
+          }
+    message: "Missing exception handling for JNI call in loop. Ensure exceptions are handled properly to avoid issues on low-end devices."
+    severity: ERROR
+    languages:
+      - c
+
+  - id: repeated-jni-calls-in-loop
+    patterns:
+      - pattern-either:
+          - pattern: |
+              for ($INIT; $COND; $INCR) {
+                (*env)->$FUNC(env, ...);
+              }
+          - pattern: |
+              while ($COND) {
+                (*env)->$FUNC(env, ...);
+              }
+    message: "Repeated JNI calls in a loop can degrade performance. Consider caching results to avoid repeated JNI calls in tight loops."
+    severity: WARNING
+    languages:
+      - c
+
+  - id: jni-release-array-elements-required
+    patterns:
+      - pattern: $VAR = (*env)->Get$TYPEArrayElements(env, ...);
+      - pattern-not-inside: |
+          (*env)->Release$TYPEArrayElements(env, $VAR, ..., $MODE);
+    message: "JNI array elements obtained via $TYPEArrayElements must be released using Release$TYPEArrayElements to avoid memory leaks."
+    severity: WARNING
+    languages:
+      - c
+
+  - id: jni-check-directbuffer-pointers
+    patterns:
+      - pattern: $VAR = (*env)->GetDirectBufferAddress(env, ...);
+      - pattern-not-inside:
+          if ($VAR == NULL) { ... }
+    message: "Check if the buffer obtained from GetDirectBufferAddress() is NULL before usage to prevent segmentation faults."
+    severity: WARNING
+    languages:
+      - c
+
+  - id: jni-thread-attach-detach-pairing
+    patterns:
+      - pattern: (*jvm)->AttachCurrentThread(jvm, &env, NULL);
+      - pattern-not-inside: (*jvm)->DetachCurrentThread(jvm);
+    message: "Threads attached using AttachCurrentThread should always be detached using DetachCurrentThread to prevent memory leaks."
+    severity: WARNING
+    languages:
+      - c
+
+# 🚀 We are always looking for passionate engineers interested in mobile security!
+# If you're excited to work on solving complex mobile security challenges,
+# connect with us on LinkedIn: 
+# 👉 https://www.linkedin.com/showcase/yinkoshield/

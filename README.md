@@ -92,7 +92,7 @@ jobs:
         run: pip install semgrep
 
       - name: Run Semgrep
-        run: semgrep --config ./rules --lang c --error
+        run: semgrep --config ./jni-harderning-rules.yaml --lang c --error
 ```
 
 🚀 **This will fail the build if security issues are found!**  
@@ -107,7 +107,7 @@ stages:
 semgrep:
   image: returntocorp/semgrep
   script:
-    - semgrep --config ./rules --lang c --error
+    - semgrep --config ./jni-harderning-rules.yaml --lang c --error
   allow_failure: false
 ```
 
